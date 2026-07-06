@@ -1,15 +1,20 @@
-"""Value coercion from OpenClaw telemetry-hal content/usage into Inspect shapes.
+"""Value coercion from OpenClaw content/usage structures into Inspect shapes.
 
-Stateless helpers that pull a value out of a single raw OpenClaw structure
-(a ``usage`` dict, a message ``content``). They hold no telemetry-wide state and
-do no structural reconstruction — that belongs to :mod:`.parse`.
+Shared by the OpenClaw importers (``_telemetry_hal`` and ``_sessions``): both
+formats carry the same message ``content`` block shapes (``text`` / ``thinking``
+/ ``image`` / ``toolCall``) and the same ``usage`` keys. Stateless helpers that
+pull a value out of a single raw OpenClaw structure; they hold no importer-wide
+state and do no structural reconstruction — that belongs to each importer's
+``parse`` module.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from inspect_ai.model import Content, ContentImage, ContentReasoning, ContentText
+from inspect_ai.tool import ToolCall, ToolCallContent
 
 
 def usage_to_inspect(usage: dict[str, Any] | None) -> dict[str, int]:
@@ -142,3 +147,61 @@ def rich_or_text(content: Any) -> str | list[Content]:
     if any(not isinstance(block, ContentText) for block in blocks):
         return blocks
     return content_to_text(content)
+
+
+def ts_to_datetime(value: Any) -> datetime | None:
+    """Convert an OpenClaw epoch-millisecond timestamp to a UTC ``datetime``."""
+    if value is None:
+        return None
+    try:
+        ms = int(value)
+    except (TypeError, ValueError):
+        return None
+    if ms <= 0:
+        return None
+    return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc)
+
+
+def short_description(task: str | None, limit: int = 80) -> str | None:
+    """First line of a spawn ``task``, trimmed for use as a span description."""
+    if not task:
+        return None
+    first = task.strip().splitlines()[0].strip() if task.strip() else ""
+    if len(first) > limit:
+        first = first[: limit - 1].rstrip() + "…"
+    return first or None
+
+
+def tool_call_view(function: str, arguments: dict[str, Any]) -> ToolCallContent | None:
+    """Custom rendering for known OpenClaw tools (mirrors Claude Code's views).
+
+    A ``sessions_spawn`` is rendered as an ``Agent: <label>`` block with the
+    delegated ``task`` as the body — the ``{{task}}`` placeholder is filled from
+    the call's arguments by the viewer, exactly as Claude Code's Task/Agent view
+    fills ``{{description}}``/``{{prompt}}``. Other tools have no custom view.
+    """
+    if function != "sessions_spawn":
+        return None
+    label = str(arguments.get("label") or "")
+    return ToolCallContent(
+        title=f"Agent: {label}" if label else "Agent",
+        format="markdown",
+        content="{{task}}",
+    )
+
+
+def to_tool_call(tc: dict[str, Any]) -> ToolCall:
+    """Build an Inspect ``ToolCall`` from a raw OpenClaw ``toolCall`` block.
+
+    Carries a custom ``view`` for tools that have one (see
+    :func:`tool_call_view`) so the model-call rendering matches Claude Code's.
+    """
+    function = str(tc.get("name") or "unknown")
+    arguments = tc.get("arguments") or {}
+    arguments = arguments if isinstance(arguments, dict) else {}
+    return ToolCall(
+        id=str(tc.get("id") or ""),
+        function=function,
+        arguments=arguments,
+        view=tool_call_view(function, arguments),
+    )

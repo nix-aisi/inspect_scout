@@ -43,13 +43,13 @@ from inspect_scout.sources._openclaw._telemetry_hal.client import (
     read_telemetry_events,
 )
 from inspect_scout.sources._openclaw._telemetry_hal.events import build_content
-from inspect_scout.sources._openclaw._telemetry_hal.extraction import (
-    content_to_text,
-    tokens_from_usage,
-)
 from inspect_scout.sources._openclaw._telemetry_hal.parse import (
     OpenClawTelemetry,
     parse_telemetry,
+)
+from inspect_scout.sources._openclaw.extraction import (
+    content_to_text,
+    tokens_from_usage,
 )
 
 # Telemetry from the plugin's raw ``appendFileSync`` dump (the pre-service

@@ -39,13 +39,17 @@ from inspect_ai.model import (
     ModelUsage,
 )
 from inspect_ai.model._generate_config import GenerateConfig
-from inspect_ai.tool import ToolCall, ToolCallContent, ToolCallError
+from inspect_ai.tool import ToolCallError
 from inspect_ai.tool import ToolResult as ToolResultContent
 
-from .extraction import (
+from ..extraction import (
     content_blocks,
     rich_or_text,
+    short_description,
+    to_tool_call,
+    tool_call_view,
     toolcalls_of,
+    ts_to_datetime,
     usage_to_inspect,
 )
 from .parse import OpenClawTelemetry, SubagentSpan, ToolResult
@@ -107,11 +111,11 @@ def build_content(
     events: list[Event] = []
     messages: list[ChatMessage] = []  # running conversation; also the final thread
     order = 0  # monotonic working_start ordinal (stable tie-break for the timeline)
-    last_ts = _ts_to_datetime(ordered[0][0]) if ordered else None
+    last_ts = ts_to_datetime(ordered[0][0]) if ordered else None
     last_ts = last_ts or _EPOCH
 
     for ts_ms, kind, item in ordered:
-        ts = _ts_to_datetime(ts_ms) or last_ts
+        ts = ts_to_datetime(ts_ms) or last_ts
         last_ts = ts
 
         if kind == "user":
@@ -139,7 +143,7 @@ def build_content(
         # Assistant turn: emit a model event (carrying the conversation so far as
         # input), then its tool events.
         toolcalls = toolcalls_of(item.get("content"))
-        tool_calls = [_to_tool_call(tc) for tc in toolcalls]
+        tool_calls = [to_tool_call(tc) for tc in toolcalls]
         turn_model = str(item["model"])
         assistant_msg = ChatMessageAssistant(
             content=content_blocks(item.get("content")),
@@ -264,7 +268,7 @@ def _emit_subagent_span(
             working_start=float(order),
             metadata={
                 "session_key": sa.session_key,
-                "description": _short_description(sa.spawn_task),
+                "description": short_description(sa.spawn_task),
                 "task": sa.spawn_task,
                 "prompt": sa.prompt,
                 "n_tool_calls": sa.n_tool_calls,
@@ -298,7 +302,7 @@ def _emit_subagent_span(
             working_start=float(order),
             span_id=span_id,
             agent_span_id=span_id,
-            view=_tool_call_view(spawn_function, spawn_arguments),
+            view=tool_call_view(spawn_function, spawn_arguments),
         )
     )
     order += 1
@@ -309,7 +313,7 @@ def _emit_subagent_span(
         sub_messages.append(ChatMessageUser(content=sa.prompt))
     for turn in sa.turns:
         toolcalls = toolcalls_of(turn.get("content"))
-        tool_calls = [_to_tool_call(tc) for tc in toolcalls]
+        tool_calls = [to_tool_call(tc) for tc in toolcalls]
         turn_model = str(turn["model"])
         assistant_msg = ChatMessageAssistant(
             content=content_blocks(turn.get("content")),
@@ -326,7 +330,7 @@ def _emit_subagent_span(
             ],
             usage=ModelUsage(**usage_to_inspect(turn.get("usage") or {})),
         )
-        turn_ts = _ts_to_datetime(turn.get("timestamp")) or timestamp
+        turn_ts = ts_to_datetime(turn.get("timestamp")) or timestamp
         span_end_ts = max(span_end_ts, turn_ts)
         events.append(
             ModelEvent(
@@ -433,67 +437,9 @@ def _tool_result_fields(
     """
     if result is None:
         return "", started, None, None
-    completed = _ts_to_datetime(result.timestamp) or started
+    completed = ts_to_datetime(result.timestamp) or started
     if result.is_error:
         return result.content, completed, ToolCallError("unknown", result.text), True
     # is_error False -> known-success; None -> unknown (leave ``failed`` unset).
     failed = False if result.is_error is False else None
     return result.content, completed, None, failed
-
-
-def _ts_to_datetime(value: Any) -> datetime | None:
-    """Convert an OpenClaw epoch-millisecond timestamp to a UTC ``datetime``."""
-    if value is None:
-        return None
-    try:
-        ms = int(value)
-    except (TypeError, ValueError):
-        return None
-    if ms <= 0:
-        return None
-    return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc)
-
-
-def _short_description(task: str | None, limit: int = 80) -> str | None:
-    """First line of a spawn ``task``, trimmed for use as a span description."""
-    if not task:
-        return None
-    first = task.strip().splitlines()[0].strip() if task.strip() else ""
-    if len(first) > limit:
-        first = first[: limit - 1].rstrip() + "…"
-    return first or None
-
-
-def _tool_call_view(function: str, arguments: dict[str, Any]) -> ToolCallContent | None:
-    """Custom rendering for known OpenClaw tools (mirrors Claude Code's views).
-
-    A ``sessions_spawn`` is rendered as an ``Agent: <label>`` block with the
-    delegated ``task`` as the body — the ``{{task}}`` placeholder is filled from
-    the call's arguments by the viewer, exactly as Claude Code's Task/Agent view
-    fills ``{{description}}``/``{{prompt}}``. Other tools have no custom view.
-    """
-    if function != "sessions_spawn":
-        return None
-    label = str(arguments.get("label") or "")
-    return ToolCallContent(
-        title=f"Agent: {label}" if label else "Agent",
-        format="markdown",
-        content="{{task}}",
-    )
-
-
-def _to_tool_call(tc: dict[str, Any]) -> ToolCall:
-    """Build an Inspect ``ToolCall`` from a raw OpenClaw ``toolCall`` block.
-
-    Carries a custom ``view`` for tools that have one (see
-    :func:`_tool_call_view`) so the model-call rendering matches Claude Code's.
-    """
-    function = str(tc.get("name") or "unknown")
-    arguments = tc.get("arguments") or {}
-    arguments = arguments if isinstance(arguments, dict) else {}
-    return ToolCall(
-        id=str(tc.get("id") or ""),
-        function=function,
-        arguments=arguments,
-        view=_tool_call_view(function, arguments),
-    )

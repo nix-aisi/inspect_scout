@@ -16,13 +16,13 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Iterable
 from inspect_ai.event import ModelEvent
 from inspect_ai.model import stable_message_ids
 
+from ..extraction import tokens_from_usage
 from .client import (
     OPENCLAW_TELEMETRY_HAL_SOURCE_TYPE,
     discover_telemetry_files,
     read_telemetry_events,
 )
 from .events import build_content
-from .extraction import tokens_from_usage
 from .parse import parse_telemetry
 
 if TYPE_CHECKING:

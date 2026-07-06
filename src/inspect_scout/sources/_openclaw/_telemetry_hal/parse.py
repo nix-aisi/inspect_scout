@@ -52,6 +52,11 @@ from typing import Any, Iterable
 
 from inspect_ai.model import Content
 
+from ..extraction import (
+    content_to_text,
+    rich_or_text,
+    toolcalls_of,
+)
 from .detection import (
     ORCH_KINDS,
     SUBAGENT_KIND,
@@ -59,11 +64,6 @@ from .detection import (
     is_orchestrator,
     session_id_from_session_key,
     session_kind,
-)
-from .extraction import (
-    content_to_text,
-    rich_or_text,
-    toolcalls_of,
 )
 
 logger = getLogger(__name__)
