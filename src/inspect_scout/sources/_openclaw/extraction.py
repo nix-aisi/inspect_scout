@@ -20,20 +20,23 @@ from inspect_ai.tool import ToolCall, ToolCallContent
 def usage_to_inspect(usage: dict[str, Any] | None) -> dict[str, int]:
     """Rename OpenClaw ``usage`` keys to Inspect ``ModelUsage`` field names.
 
+    ``total_tokens`` is computed as ``input + output + cacheRead + cacheWrite``
+    (see :func:`tokens_from_usage`) rather than trusting the raw
+    ``totalTokens``: the two usually agree, but raw ``totalTokens`` has been
+    observed to exclude cache tokens on some turns of native session captures.
+
     NB OpenClaw's ``input`` is the *uncached/new* input only (exclusive-cache
     semantics). ``reasoning_tokens`` is left 0: OpenClaw *does* emit thinking
     blocks (surfaced as ``ContentReasoning``; see :func:`content_blocks`) but
     reports no separate reasoning-token count — reasoning is folded into
-    ``output`` (verified across the CRUX1 capture: ``input + output + cacheRead
-    + cacheWrite == totalTokens`` for every turn), so it is already counted,
-    just not broken out. ``cost`` is dropped (Inspect ``ModelUsage`` has no
-    cost field).
+    ``output``, so it is already counted, just not broken out. ``cost`` is
+    dropped (Inspect ``ModelUsage`` has no cost field).
     """
     usage = usage or {}
     return {
         "input_tokens": int(usage.get("input") or 0),
         "output_tokens": int(usage.get("output") or 0),
-        "total_tokens": int(usage.get("totalTokens") or 0),
+        "total_tokens": tokens_from_usage(usage),
         "input_tokens_cache_write": int(usage.get("cacheWrite") or 0),
         "input_tokens_cache_read": int(usage.get("cacheRead") or 0),
         "reasoning_tokens": 0,
