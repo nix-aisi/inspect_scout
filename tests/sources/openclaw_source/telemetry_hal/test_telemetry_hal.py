@@ -118,14 +118,17 @@ class TestDiscovery:
         monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows
         f = tmp_path / "telemetry.jsonl"
         f.write_text("{}\n")
+
         assert discover_telemetry_files("~/telemetry.jsonl") == [f]
 
     def test_nonexistent_path_warns_and_returns_empty(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         missing = tmp_path / "does_not_exist.jsonl"
+
         with caplog.at_level(logging.WARNING):
             assert discover_telemetry_files(missing) == []
+
         assert any("does not exist" in r.message.lower() for r in caplog.records)
 
 
@@ -137,13 +140,16 @@ class TestReadTelemetry:
     def test_skips_malformed_lines(self, tmp_path: Path) -> None:
         f = tmp_path / "t.jsonl"
         f.write_text('{"type": "agent.start"}\nnot json\n\n{"type": "agent.end"}\n')
+
         events = list(read_telemetry_events(f))
+
         assert len(events) == 2
 
 
 class TestParse:
     def test_orchestrator_and_subagents(self, raw_events: list[dict[str, Any]]) -> None:
         parse = parse_telemetry(raw_events)
+
         assert parse.orchestrator_turns
         assert parse.model_name == "claude-opus-4-8"
         assert len(parse.subagents) == 3
@@ -152,6 +158,7 @@ class TestParse:
         self, raw_events: list[dict[str, Any]]
     ) -> None:
         parse = parse_telemetry(raw_events)
+
         # Every sub-agent in this fixture was spawned via a linkable
         # sessions_spawn tool call (childSessionKey present in the result).
         assert all(sa.spawn_tool_call_id is not None for sa in parse.subagents)
@@ -187,6 +194,7 @@ class TestParse:
                 ],
             },
         ]
+
         assert parse_telemetry(raw).model_name == "orch-model"
 
     def test_model_less_turn_fails_with_meaningful_error(self) -> None:
@@ -209,6 +217,7 @@ class TestParse:
                 ],
             }
         ]
+
         with pytest.raises(ValueError, match="missing its 'model'"):
             parse_telemetry(raw)
 
@@ -259,6 +268,7 @@ class TestParse:
             *self._orch_raw("agent:main:main:s1"),
             {"type": "message.out", "channel": "telegram", "content": "bye"},
         ]
+
         assert len(parse_telemetry(raw).orchestrator_turns) == 1
 
     def _orch_raw(self, session_key: str) -> list[dict[str, Any]]:
@@ -285,17 +295,20 @@ class TestParse:
         parse = parse_telemetry(
             self._orch_raw("agent:main:telegram:default:direct:5912046256")
         )
+
         assert parse.session_id == "5912046256"
 
     def test_session_id_none_for_scrubbed_telegram_key(self) -> None:
         # A redacted trailing id is not a usable id -> None (caller falls back
         # to the file stem).
         parse = parse_telemetry(self._orch_raw("agent:main:telegram:direct:[REMOVED]"))
+
         assert parse.session_id is None
 
     def test_session_id_none_for_kind_only_key(self) -> None:
         # agent:main:main carries no id after the kind segment.
         parse = parse_telemetry(self._orch_raw("agent:main:main"))
+
         assert parse.session_id is None
 
     @pytest.mark.parametrize(
@@ -313,6 +326,7 @@ class TestParse:
         # have its assistant turns classified as orchestrator turns; otherwise
         # the transcript is silently dropped for having no turns.
         parse = parse_telemetry(self._orch_raw(session_key))
+
         assert len(parse.orchestrator_turns) == 1
 
     def test_keyless_turns_with_sanitized_toolcall_ids_collapse(self) -> None:
@@ -369,7 +383,9 @@ class TestParse:
                 "messages": [],
             },
         ]
+
         parse = parse_telemetry(raw)
+
         # One turn, kept in its first-seen (provider-id) spelling.
         assert len(parse.orchestrator_turns) == 1
         toolcall_id = parse.orchestrator_turns[0]["content"][0]["id"]
@@ -427,7 +443,9 @@ class TestParse:
                 ],
             },
         ]
+
         parse = parse_telemetry(raw)
+
         texts = [content_to_text(u.get("content")) for u in parse.user_turns]
         assert texts == ["hello there", "[runtime context]"]
         kept = parse.user_turns[0]
@@ -439,6 +457,7 @@ class TestEvents:
     def test_event_mix(self, raw_events: list[dict[str, Any]]) -> None:
         events = build_events(parse_telemetry(raw_events))
         counts = Counter(e.event for e in events)
+
         assert counts["model"] > 0
         assert counts["tool"] > 0
         # One begin/end pair per sub-agent.
@@ -449,6 +468,7 @@ class TestEvents:
         self, raw_events: list[dict[str, Any]]
     ) -> None:
         events = build_events(parse_telemetry(raw_events))
+
         spans = [e for e in events if isinstance(e, SpanBeginEvent)]
         assert spans and all(s.type == "agent" for s in spans)
         # The span carries the spawn prompt in metadata.
@@ -461,6 +481,7 @@ class TestEvents:
     ) -> None:
         parse = parse_telemetry(raw_events)
         events = build_events(parse)
+
         span_ids = {sa.session_key for sa in parse.subagents}
         # The sub-agent's own tool calls are reconstructed as events nested
         # inside its agent span (linked via span_id), not just summarised in
@@ -506,6 +527,7 @@ class TestEvents:
     ) -> None:
         parse = parse_telemetry(raw_events)
         events = build_events(parse)
+
         spawn_ids = {
             sa.spawn_tool_call_id for sa in parse.subagents if sa.spawn_tool_call_id
         }
@@ -527,6 +549,7 @@ class TestEvents:
 
     def test_tool_events_keep_raw_shape(self, raw_events: list[dict[str, Any]]) -> None:
         events = build_events(parse_telemetry(raw_events))
+
         tool_events = [e for e in events if isinstance(e, ToolEvent)]
         # Raw OpenClaw tool name preserved (no exec->bash relabel).
         assert any(e.function == "exec" for e in tool_events)
@@ -539,6 +562,7 @@ class TestEvents:
         # completion time from its result rather than the parent turn's time, so
         # the call->result span is real. This fixture's tools all succeeded.
         events = build_events(parse_telemetry(raw_events))
+
         root_tools = [
             e for e in events if isinstance(e, ToolEvent) and e.span_id is None
         ]
@@ -580,7 +604,9 @@ class TestEvents:
                 ],
             }
         ]
+
         events = build_events(parse_telemetry(raw))
+
         tool = next(e for e in events if isinstance(e, ToolEvent))
         assert tool.failed is True
         assert tool.error is not None and tool.error.message == "command not found"
@@ -661,8 +687,10 @@ class TestEvents:
                 "messages": subagent_messages,
             },
         ]
+
         with caplog.at_level(logging.WARNING):
             parse = parse_telemetry(raw)
+
         # Only the orchestrator's compaction survives, and the drop is reported
         # once, naming the sub-agent session.
         assert [c.get("tokensBefore") for c in parse.compactions] == [111]
@@ -680,6 +708,7 @@ class TestEvents:
 
     def test_model_events_carry_usage(self, raw_events: list[dict[str, Any]]) -> None:
         events = build_events(parse_telemetry(raw_events))
+
         model_events = [e for e in events if isinstance(e, ModelEvent)]
         assert model_events
         assert any(
@@ -690,6 +719,7 @@ class TestEvents:
         self, raw_events: list[dict[str, Any]]
     ) -> None:
         events = build_events(parse_telemetry(raw_events))
+
         model_events = [e for e in events if isinstance(e, ModelEvent)]
         # The first model call's input is the opening user prompt; later calls
         # accumulate the conversation (so user turns show in the events view).
@@ -701,6 +731,7 @@ class TestEvents:
         self, raw_events: list[dict[str, Any]]
     ) -> None:
         events = build_events(parse_telemetry(raw_events))
+
         model_events = [e for e in events if isinstance(e, ModelEvent)]
         assert any(e.output.message.tool_calls for e in model_events)
 
@@ -738,8 +769,10 @@ class TestEvents:
                 ],
             }
         ]
+
         parse = parse_telemetry(raw)
         assert parse.model_name == "model-a"  # modal, ignores the stray tag
+
         events = build_events(parse)
         models = [e.model for e in events if isinstance(e, ModelEvent)]
         # Each event keeps its own raw model tag -- no fallback, no rewriting.
@@ -821,6 +854,7 @@ class TestSchemaASubagents:
     def test_turns_become_model_and_tool_events_in_span(self) -> None:
         parse = parse_telemetry(self._raw())
         events = build_events(parse)
+
         span_ids = {sa.session_key for sa in parse.subagents}
         # Sub-agent assistant turn -> ModelEvent nested in the agent span.
         model_in_span = [
@@ -851,6 +885,7 @@ class TestSchemaASubagents:
 
     def test_subagent_turns_excluded_from_main_thread(self) -> None:
         messages = build_messages(parse_telemetry(self._raw()))
+
         # The orchestrator spawn turn is on the main thread; the sub-agent's
         # own "sub thinking" turn is not.
         assert not any("sub thinking" in m.text for m in messages)
@@ -908,7 +943,9 @@ class TestSchemaASubagents:
             {"type": "agent.start", "sessionKey": child, "messages": [turn]},
             {"type": "agent.end", "sessionKey": child, "messages": [turn]},
         ]
+
         parse = parse_telemetry(raw)
+
         assert len(parse.subagents) == 1
         sa = parse.subagents[0]
         assert sa.n_assistant_turns == 1
@@ -979,7 +1016,9 @@ class TestSchemaASubagents:
                 "messages": [turn("toolu01AbC")],  # sanitized re-dump
             },
         ]
+
         parse = parse_telemetry(raw)
+
         assert len(parse.subagents) == 1
         sa = parse.subagents[0]
         assert sa.n_assistant_turns == 1
@@ -1007,8 +1046,10 @@ class TestSchemaASubagents:
                 "success": True,
             },
         ]
+
         parse = parse_telemetry(raw)
         events = build_events(parse)
+
         span_ids = {sa.session_key for sa in parse.subagents}
         exec_events = [
             e
@@ -1058,11 +1099,14 @@ class TestSchemaASubagents:
                 ],
             },
         ]
+
         parse = parse_telemetry(raw)
         assert len(parse.subagents) == 1
         assert parse.subagents[0].spawn_tool_call_id is None
+
         with caplog.at_level(logging.WARNING):
             events = build_events(parse)
+
         # No span is emitted for the unlinked sub-agent, and it is reported.
         assert not any(isinstance(e, SpanBeginEvent) for e in events)
         assert any(
@@ -1076,12 +1120,14 @@ class TestMessages:
         self, raw_events: list[dict[str, Any]]
     ) -> None:
         messages = build_messages(parse_telemetry(raw_events))
+
         assert messages
         roles = {m.role for m in messages}
         assert roles <= {"user", "assistant", "tool"}
 
     def test_user_prompts_present(self, raw_events: list[dict[str, Any]]) -> None:
         messages = build_messages(parse_telemetry(raw_events))
+
         user_texts = [m.text for m in messages if m.role == "user"]
         # The three human Telegram prompts from the fixture.
         assert len(user_texts) == 3
@@ -1097,6 +1143,7 @@ class TestMessages:
         self, raw_events: list[dict[str, Any]]
     ) -> None:
         messages = build_messages(parse_telemetry(raw_events))
+
         tool_call_ids = {
             tc.id
             for m in messages
@@ -1118,6 +1165,7 @@ class TestTranscript:
 
     def test_identity_and_metadata(self) -> None:
         transcript = _single_transcript()
+
         assert transcript.source_type == OPENCLAW_TELEMETRY_HAL_SOURCE_TYPE
         assert transcript.agent == "openclaw"
         assert transcript.model == "claude-opus-4-8"
@@ -1160,7 +1208,9 @@ class TestTranscript:
                 ],
             }
         ]
+
         transcript = _create_transcript(raw, tmp_path / "telemetry.jsonl")
+
         assert transcript is not None
         assert transcript.source_id == "99999"  # bare chat/session id
         assert transcript.transcript_id == "99999-5000"  # + earliest event ts
@@ -1168,6 +1218,7 @@ class TestTranscript:
 
     def test_totals(self) -> None:
         transcript = _single_transcript()
+
         assert transcript.message_count == len(transcript.messages)
         assert transcript.total_tokens and transcript.total_tokens > 0
         assert transcript.total_time and transcript.total_time > 0
@@ -1197,6 +1248,7 @@ class TestTranscript:
     def test_serializes_round_trip(self) -> None:
         transcript = _single_transcript()
         restored = Transcript.model_validate_json(transcript.model_dump_json())
+
         assert restored.transcript_id == transcript.transcript_id
         assert restored.message_count == transcript.message_count
         assert len(restored.events) == len(transcript.events)
@@ -1205,6 +1257,7 @@ class TestTranscript:
     async def test_empty_file_yields_nothing(self, tmp_path: Path) -> None:
         f = tmp_path / "empty.jsonl"
         f.write_text("")
+
         assert await _transcripts(f) == []
 
 
@@ -1234,6 +1287,7 @@ class TestCrux1SampleExtract:
         self, crux1_raw: list[dict[str, Any]]
     ) -> None:
         parse = parse_telemetry(crux1_raw)
+
         # These assistant turns have no responseId, yet the cumulative snapshots
         # still collapse to a deduped set of orchestrator turns. The exact count
         # matters: a dedup regression on the (timestamp, content) fallback path
@@ -1245,6 +1299,7 @@ class TestCrux1SampleExtract:
         self, crux1_raw: list[dict[str, Any]]
     ) -> None:
         parse = parse_telemetry(crux1_raw)
+
         assert len(parse.subagents) == 1
         sa = parse.subagents[0]
         # Hybrid: the sub-agent has BOTH schema-A turns and schema-B tool calls.
@@ -1256,6 +1311,7 @@ class TestCrux1SampleExtract:
     ) -> None:
         parse = parse_telemetry(crux1_raw)
         events = build_events(parse)
+
         span_ids = {sa.session_key for sa in parse.subagents}
         exec_in_span = [
             e
@@ -1274,6 +1330,7 @@ class TestCrux1SampleExtract:
     ) -> None:
         parse = parse_telemetry(crux1_raw)
         events = build_events(parse)
+
         span_ids = {sa.session_key for sa in parse.subagents}
         sub_models = [
             e for e in events if isinstance(e, ModelEvent) and e.span_id in span_ids
@@ -1287,6 +1344,7 @@ class TestCrux1SampleExtract:
     @pytest.mark.asyncio
     async def test_yields_single_transcript(self) -> None:
         transcripts = await _transcripts(CRUX1_FIXTURE)
+
         assert len(transcripts) == 1
         assert transcripts[0].metadata["n_subagents"] == 1
 
@@ -1313,6 +1371,7 @@ class TestCrux1SampleExtract:
         # ContentReasoning on the message thread (not be silently dropped as they
         # were before). Guards against a regression to text-only flattening.
         messages = build_messages(parse_telemetry(read_telemetry_events(CRUX1_FIXTURE)))
+
         reasoning = [
             block
             for m in messages
@@ -1384,6 +1443,7 @@ class TestRichContent:
 
     def test_assistant_thinking_becomes_reasoning(self) -> None:
         messages = build_messages(parse_telemetry(self._raw()))
+
         assistant = next(m for m in messages if isinstance(m, ChatMessageAssistant))
         assert isinstance(assistant.content, list)
         reasoning = [b for b in assistant.content if isinstance(b, ContentReasoning)]
@@ -1396,6 +1456,7 @@ class TestRichContent:
 
     def test_tool_result_image_becomes_content_image(self) -> None:
         messages = build_messages(parse_telemetry(self._raw()))
+
         tool_msg = next(m for m in messages if isinstance(m, ChatMessageTool))
         assert isinstance(tool_msg.content, list)
         images = [b for b in tool_msg.content if isinstance(b, ContentImage)]
@@ -1412,6 +1473,7 @@ class TestRichContent:
         # The common case (no images/reasoning) must remain a plain string, not a
         # single-element Content list — keeps the vast majority of turns simple.
         messages = build_messages(parse_telemetry(self._raw()))
+
         user = next(m for m in messages if m.role == "user")
         assert user.content == "take a screenshot"
 
@@ -1423,7 +1485,9 @@ class TestRichContent:
 
         transcript = _create_transcript(self._raw(), tmp_path / "telemetry.jsonl")
         assert transcript is not None
+
         restored = Transcript.model_validate_json(transcript.model_dump_json())
+
         images = [
             b
             for m in restored.messages
