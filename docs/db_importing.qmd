@@ -284,6 +284,8 @@ Claude Code transcripts are mapped to the database schema as follows:
 
 [OpenClaw](https://openclaw.ai) is an open-source AI assistant. Scout can import the native session files OpenClaw writes under `~/.openclaw/agents/<agent>/sessions/` — one `.jsonl` per session plus a `sessions.json` registry describing how sessions relate.
 
+This is the **recommended** way to import OpenClaw data: it reads OpenClaw's own on-disk session files directly, requires no plugins, and captures the full, richest record (including sub-agent topology). Prefer it over [OpenClaw Telemetry](#openclaw-telemetry) unless you only have telemetry captures rather than the native session files.
+
 Use the `openclaw()` transcript source to import sessions:
 
 ```python
@@ -327,7 +329,13 @@ OpenClaw transcripts are mapped to the database schema as follows:
 
 ## OpenClaw Telemetry {#openclaw-telemetry}
 
-[OpenClaw](https://openclaw.ai) is an open-source AI assistant. Scout can import transcripts from JSONL telemetry files written by the third party [`openclaw-telemetry-hal`](https://github.com/sage-princeton/openclaw-telemetry-hal) plugin (by default to `~/.openclaw/logs/telemetry.jsonl`).
+Scout can import transcripts from JSONL telemetry files written by the third party [`openclaw-telemetry-hal`](https://github.com/sage-princeton/openclaw-telemetry-hal) plugin (by default to `~/.openclaw/logs/telemetry.jsonl`).
+
+::: {.callout-tip}
+## Prefer native sessions
+
+Use this source only when telemetry files are all you have. If you have access to OpenClaw's native session files, use [OpenClaw](#openclaw) (`openclaw()`) instead — it needs no plugin and preserves more of the original record.
+:::
 
 Use the `openclaw_telemetry_hal()` transcript source to import a telemetry file.
 
@@ -351,12 +359,6 @@ OpenClaw transcripts are mapped to the database schema as follows:
 | `source_id` | Session/chat id from the OpenClaw session key |
 | `transcript_id` | Session/chat id combined with the run's earliest timestamp |
 | `agent` | `"openclaw"` |
-
-::: {.callout-note}
-## Supported formats
-
-`openclaw-telemetry-hal` is a third party plugin.
-:::
 
 
 ## Transcript API
