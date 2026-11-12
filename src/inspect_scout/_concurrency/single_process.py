@@ -200,16 +200,24 @@ def single_process_strategy(
             # Rule 7: Both queues empty/exhausted
             return "wait"
 
-        async def _perform_wait(current_wait_duration: float) -> float:
-            """Perform the wait action: yield control and update metrics.
+        # Set on every change that can alter _choose_next_action()'s answer or
+        # the termination check, waking idle workers. anyio events can't be
+        # cleared, so each notification swaps in a fresh one.
+        state_changed = anyio.Event()
 
-            Returns the next wait duration to use. First wait is 0s, subsequent waits are 1s.
-            """
+        def _notify() -> None:
+            nonlocal state_changed
+            state_changed.set()
+            state_changed = anyio.Event()
+
+        async def _perform_wait() -> None:
+            """Perform the wait action: idle until another worker changes the scheduling state."""
             metrics.tasks_idle += 1
             _update_metrics()
-            await anyio.sleep(current_wait_duration)
+            # the timeout bounds the cost of a state change that misses _notify()
+            with anyio.move_on_after(1.0):
+                await state_changed.wait()
             metrics.tasks_idle -= 1
-            return 1.0 if current_wait_duration == 0 else 1.0
 
         async def _perform_parse(worker_id: int, reader: TranscriptsReader) -> bool:
             """Perform the parse action. Returns True if parse job was pulled from the queue, False if there was no parse job to perform."""
@@ -249,6 +257,7 @@ def single_process_strategy(
                 return True
             finally:
                 metrics.tasks_parsing -= 1
+                _notify()
 
         async def _perform_scan(worker_id: int) -> bool:
             """Perform the scan action. Returns True if scan completed, False otherwise."""
@@ -280,6 +289,7 @@ def single_process_strategy(
                 for follower in scanner_job.followers:
                     scanner_job_deque.append(follower)
                 metrics.tasks_scanning -= 1
+                _notify()
 
         async def _worker_task(
             worker_id: int,
@@ -289,16 +299,14 @@ def single_process_strategy(
             nonlocal parse_jobs_exhausted
             scans_completed = 0
             parses_completed = 0
-            wait_duration = 0.0
 
             try:
                 while True:
                     action = _choose_next_action()
 
                     if action == "wait":
-                        wait_duration = await _perform_wait(wait_duration)
+                        await _perform_wait()
                     elif action == "parse":
-                        wait_duration = 0.0
                         if await _perform_parse(worker_id, reader):
                             parses_completed += 1
                         else:
@@ -306,8 +314,8 @@ def single_process_strategy(
                                 f"Worker #{worker_id:02d}", "No more parse jobs"
                             )
                             parse_jobs_exhausted = True
+                            _notify()
                     elif action == "scan":
-                        wait_duration = 0.0
                         if await _perform_scan(worker_id):
                             scans_completed += 1
 
@@ -325,6 +333,7 @@ def single_process_strategy(
                 )
             finally:
                 metrics.task_count -= 1
+                _notify()
                 _update_metrics()
 
         async def _metrics_ticker(scope: anyio.CancelScope) -> None:
